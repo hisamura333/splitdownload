@@ -11,7 +11,7 @@ import (
 func Download(t *Target) {
 	fmt.Println("downloading...")
 
-	out_path := GetFilePath(t.DirPath, t.FileName)
+	out_path := GetFilePath(t)
 	out, err := os.Create(out_path)
 	ChkErr(err)
 	defer func() {
@@ -26,7 +26,10 @@ func Download(t *Target) {
 	ch := make(chan int)
 	go ProgressBar(t, &out_path, ch)
 
+	// 1回のDLで行うファイルサイズ
 	split_size := t.FileSize / t.SplitTimes
+
+	// 並列で回すときに、何byteまでDLするかの値listに保持する
 	size_array := []int64{}
 
 	var times int64
@@ -35,16 +38,16 @@ func Download(t *Target) {
 	}
 	var downloadFiles int
 
-	for v := range size_array {
+	for i := range size_array {
 
-		v := v
+		i := i
 		out := out
 
 		go func() {
 			req, err := http.NewRequest("GET", t.Url, nil)
 			ChkErr(err)
 
-			buildReq := BuildRequest(v, req, size_array, t)
+			buildReq := BuildRequest(i, req, size_array, t)
 
 			res, err := http.DefaultClient.Do(buildReq)
 			ChkErr(err)
@@ -52,10 +55,13 @@ func Download(t *Target) {
 			defer res.Body.Close()
 
 			for {
-				if downloadFiles == v {
+				if downloadFiles == i {
 					v, err := io.Copy(out, res.Body)
 					ChkErr(err)
 
+					// ゴルーチンで処理したファイルのサイズが分割した値の半分よりも小さい時はエラー
+					// 数byteしか処理ができない時があり、分割DLが完了しない時があったので、
+					// それを防ぐために一時的に追加
 					if v < split_size/2 {
 						fmt.Println("split_size error")
 						os.Exit(1)
